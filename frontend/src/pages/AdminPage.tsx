@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
-import { PlayIcon, StopIcon } from '@heroicons/react/24/solid';
+import { useEffect, useState } from "react";
+import { io, Socket } from "socket.io-client";
+import { PlayIcon, StopIcon } from "@heroicons/react/24/solid";
 
 interface VoteUpdate {
   userId: string;
@@ -10,12 +10,15 @@ interface VoteUpdate {
 
 interface PollResult {
   winningVote: number;
-  voteCounts: Record<number, number>;
+  boxesInRow: number;
+  tipUserId?: string;
+  tipMessage?: string;
 }
 
 interface PollStarted {
   startTime: number;
   duration: number;
+  boxesInRow: number;
 }
 
 export function AdminPage() {
@@ -26,41 +29,40 @@ export function AdminPage() {
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [boxesInRow, setBoxesInRow] = useState<number>(2);
   const [pollDuration, setPollDuration] = useState<number>(20);
-
+  const [tipMessage, setTipMessage] = useState<string | null>(null);
   useEffect(() => {
-    const newSocket = io('http://localhost:4000');
+    const newSocket = io("http://localhost:4000");
     setSocket(newSocket);
 
-    newSocket.on('pollStarted', ({ startTime, duration }: PollStarted) => {
+    newSocket.on("pollStarted", ({ startTime, duration, boxesInRow }: PollStarted) => {
       setIsPollActive(true);
       setVotes({});
       setPollResult(null);
+      setTipMessage(null);
       setTimeLeft(duration / 1000);
+      setBoxesInRow(boxesInRow);
     });
 
-    newSocket.on('pollEnded', (result: PollResult) => {
+    newSocket.on("pollEnded", (result: PollResult) => {
       setIsPollActive(false);
       setPollResult(result);
+      if (result.tipUserId && result.tipMessage) {
+        setTipMessage(
+          `${result.tipUserId} ${result.tipMessage} and closed the poll with a vote for box ${result.winningVote}`
+        );
+      }
       setTimeLeft(0);
     });
 
-    newSocket.on('pollStopped', () => {
+    newSocket.on("pollStopped", () => {
       setIsPollActive(false);
       setTimeLeft(0);
     });
 
-    newSocket.on('voteUpdate', (update: VoteUpdate) => {
-      setVotes(prev => ({
+    newSocket.on("voteUpdate", (update: VoteUpdate) => {
+      setVotes((prev) => ({
         ...prev,
-        [update.userId]: update.vote
-      }));
-    });
-
-    newSocket.on('voteUpdateTip', (update: VoteUpdate) => {
-      console.log('WE GOT A TIP', update);
-      setVotes(prev => ({
-        ...prev,
-        [update.userId]: update.vote
+        [update.userId]: update.vote,
       }));
     });
 
@@ -73,7 +75,7 @@ export function AdminPage() {
     let timer: NodeJS.Timeout;
     if (isPollActive && timeLeft > 0) {
       timer = setInterval(() => {
-        setTimeLeft(prev => prev - 1);
+        setTimeLeft((prev) => prev - 1);
       }, 1000);
     }
     return () => {
@@ -82,11 +84,11 @@ export function AdminPage() {
   }, [isPollActive, timeLeft]);
 
   const startPoll = () => {
-    socket?.emit('startPoll', { boxesInRow, duration: pollDuration * 1000 });
+    socket?.emit("startPoll", { boxesInRow, duration: pollDuration * 1000 });
   };
 
   const stopPoll = () => {
-    socket?.emit('stopPoll');
+    socket?.emit("stopPoll");
   };
 
   const calculateVoteDistribution = () => {
@@ -99,7 +101,7 @@ export function AdminPage() {
     }
 
     // Count votes
-    Object.values(votes).forEach(vote => {
+    Object.values(votes).forEach((vote) => {
       if (vote >= 1 && vote <= boxesInRow) {
         distribution[vote] = (distribution[vote] || 0) + 1;
       }
@@ -114,11 +116,16 @@ export function AdminPage() {
     <div className="space-y-6">
       <div className="bg-white shadow sm:rounded-lg">
         <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">Poll Controls</h3>
+          <h3 className="text-lg font-medium leading-6 text-gray-900">
+            Poll Controls
+          </h3>
           <div className="mt-5 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="flex items-center space-x-4">
-                <label htmlFor="boxesInRow" className="block text-sm font-medium text-gray-700">
+                <label
+                  htmlFor="boxesInRow"
+                  className="block text-sm font-medium text-gray-700"
+                >
                   Boxes in Row:
                 </label>
                 <input
@@ -131,7 +138,10 @@ export function AdminPage() {
                 />
               </div>
               <div className="flex items-center space-x-4">
-                <label htmlFor="pollDuration" className="block text-sm font-medium text-gray-700">
+                <label
+                  htmlFor="pollDuration"
+                  className="block text-sm font-medium text-gray-700"
+                >
                   Duration (seconds):
                 </label>
                 <input
@@ -169,9 +179,13 @@ export function AdminPage() {
       {isPollActive && (
         <div className="bg-white shadow sm:rounded-lg">
           <div className="px-4 py-5 sm:p-6">
-            <h3 className="text-lg font-medium leading-6 text-gray-900">Active Poll</h3>
+            <h3 className="text-lg font-medium leading-6 text-gray-900">
+              Active Poll
+            </h3>
             <div className="mt-2">
-              <p className="text-sm text-gray-500">Time remaining: {timeLeft} seconds</p>
+              <p className="text-sm text-gray-500">
+                Time remaining: {timeLeft} seconds
+              </p>
               <p className="text-sm text-gray-500">Total votes: {totalVotes}</p>
             </div>
           </div>
@@ -182,15 +196,21 @@ export function AdminPage() {
         <div className="bg-white shadow sm:rounded-lg">
           <div className="px-4 py-5 sm:p-6">
             <h3 className="text-lg font-medium leading-6 text-gray-900">
-              {isPollActive ? 'Live Vote Distribution' : 'Poll Results'}
+              {isPollActive
+                ? "Live Vote Distribution"
+                : `Poll Results: Box ${pollResult?.winningVote} won!`}
             </h3>
+            {tipMessage && (
+              <p className="text-md text-gray-500">{tipMessage}</p>
+            )}
             <div className="mt-4 space-y-4">
               {Object.entries(distribution).map(([vote, count]) => {
-                const percentage = totalVotes > 0 ? (count / totalVotes) * 100 : 0;
+                const percentage =
+                  totalVotes > 0 ? (count / totalVotes) * 100 : 0;
                 return (
                   <div key={vote} className="space-y-1">
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Vote {vote}</span>
+                      <span className="text-gray-500">Box {vote}</span>
                       <span className="text-gray-900 font-medium">
                         {count} votes ({percentage.toFixed(1)}%)
                       </span>
@@ -210,4 +230,4 @@ export function AdminPage() {
       )}
     </div>
   );
-} 
+}
