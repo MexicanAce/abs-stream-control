@@ -81,12 +81,12 @@ async function getBoxesInCurrentRow(): Promise<number> {
     console.log("No browser or deathFunPage");
     return 0;
   }
-  const currentRow = await deathFunPage.$('.ring-primary');
+  const currentRow = await deathFunPage.$(".ring-primary");
   if (!currentRow) {
     console.log("No current row");
     return 0;
   }
-  const boxes = await currentRow.$$('button');
+  const boxes = await currentRow.$$("button");
   console.log("Boxes in current row", boxes.length);
   return boxes.length;
 }
@@ -96,18 +96,45 @@ async function clickBoxInCurrentRow(boxIndex: number) {
     console.log("No browser or deathFunPage");
     return;
   }
-  const currentRow = await deathFunPage.$('.ring-primary');
+  const currentRow = await deathFunPage.$(".ring-primary");
   if (!currentRow) {
     console.log("No current row");
     return 0;
   }
-  const boxes = await currentRow.$$('button');
+  const boxes = await currentRow.$$("button");
   if (boxes.length === 0) {
     console.log("No boxes in current row");
     return;
   }
   const box = boxes[boxIndex];
   await box.click();
+}
+
+async function clickCashOut() {
+  if (!browser || !deathFunPage) {
+    console.log("No browser or deathFunPage");
+    return;
+  }
+  const buttons = await deathFunPage.$$("button");
+  for (const button of buttons) {
+    const text = await deathFunPage.evaluate(
+      (el) => el.textContent?.trim(),
+      button
+    );
+    if (text === "Cash Out") {
+      await button.click();
+      break;
+    }
+  }
+}
+
+function isVoteForCashOut(messageText: string): boolean {
+  return (
+    messageText === "cash out" ||
+    messageText === "cashout" ||
+    messageText === "cash" ||
+    (messageText === "gm" && env.DEBUG_MODE === "true")
+  );
 }
 
 // Connect to Stream Chat
@@ -129,46 +156,59 @@ async function connectToStreamChat() {
     });
 
     channels.forEach((channel: Channel) => {
-      channel.on("message.new", (event: Event) => {
+      channel.on("message.new", async (event: Event) => {
         const message = event.message as Message;
 
         if (currentPoll.isActive && message?.text) {
           let vote = parseInt(message.text);
 
-          if (message.text.toLowerCase() === "cash out") {
+          if (isVoteForCashOut(message.text.toLowerCase())) {
+            console.log("Vote for Cash Out", message.text, "by", message.user?.id);
             vote = -1;
           }
 
-          if (isNaN(vote) && env.DEBUG_MODE) {
+          if (isNaN(vote) && env.DEBUG_MODE === "true") {
             vote = Math.floor(Math.random() * currentPoll.boxesInRow) + 1;
           }
 
-          if (!isNaN(vote) && vote >= 1 && vote <= currentPoll.boxesInRow) {
+          if (!isNaN(vote) && vote >= -1 && vote != 0 && vote <= currentPoll.boxesInRow) {
             const userId = message.user?.id;
             if (userId && !currentPoll.votes.has(userId)) {
               currentPoll.votes.set(userId, vote);
+              io.emit("voteUpdate", {
+                userId,
+                vote,
+                totalVotes: currentPoll.votes.size,
+              });
+            }
+          }
 
-              if (message.pinned) {
-                console.log("WE GOT A PINNED MESSAGE", userId, message.text);
-                if (isTipAboveMin(message.text)) {
-                  io.emit("pollEnded", {
-                    winningVote: vote,
-                    boxesInRow: currentPoll.boxesInRow,
-                    tipUserId: userId,
-                    tipMessage: message.text,
-                  });
-                  currentPoll.isActive = false;
-                  io.emit("pollStopped");
-                } else {
-                  console.log("Tip not above threshold..");
-                }
-              } else {
-                io.emit("voteUpdate", {
-                  userId,
-                  vote,
-                  totalVotes: currentPoll.votes.size,
+          // Handle tips
+          if (message.pinned) {
+            const userId = message.user?.id;
+            console.log("WE GOT A PINNED MESSAGE", userId, message.text);
+            if (userId && isTipAboveMin(message.text)) {
+              const vote = currentPoll.votes.get(userId);
+              if (vote) {
+                console.log("Vote found for user", vote);
+                io.emit("pollEnded", {
+                  winningVote: vote,
+                  boxesInRow: currentPoll.boxesInRow,
+                  tipUserId: userId,
+                  tipMessage: message.text,
                 });
+                currentPoll.isActive = false;
+                if (vote > 0) {
+                  await clickBoxInCurrentRow(vote - 1);
+                } else {
+                  await clickCashOut();
+                }
+                io.emit("pollStopped");
+              } else {
+                console.log("No vote found for user");
               }
+            } else {
+              console.log("Tip not above threshold..");
             }
           }
         }
@@ -185,7 +225,13 @@ io.on("connection", (socket) => {
 
   socket.on(
     "startPoll",
-    async ({ boxesInRow, duration }: { boxesInRow: number; duration: number }) => {
+    async ({
+      boxesInRow,
+      duration,
+    }: {
+      boxesInRow: number;
+      duration: number;
+    }) => {
       if (!currentPoll.isActive) {
         const pollDuration = Math.min(
           300000,
@@ -223,25 +269,27 @@ io.on("connection", (socket) => {
 
             let maxVotes = 0;
             let winningVote = 1;
+            let winners: number[] = [];
             voteCounts.forEach((count, vote) => {
               if (count > maxVotes) {
                 maxVotes = count;
-                winningVote = vote;
-              }
-              if (count === maxVotes) {
-                // if there is a tie, we need to pick a random winner
-                winningVote = Math.random() >= 0.5 ? vote : winningVote;
+                winners = [vote];
+              } else if (count === maxVotes) {
+                winners.push(vote);
               }
             });
+
+            winningVote = winners[Math.floor(Math.random() * winners.length)];
 
             io.emit("pollEnded", {
               winningVote,
               boxesInRow: currentPoll.boxesInRow,
             });
             if (winningVote > 0) {
-              await clickBoxInCurrentRow(winningVote-1);
+              await clickBoxInCurrentRow(winningVote - 1);
             } else {
-              console.log("Vote was to Cash Out");
+              console.log(`Vote was ${winningVote} to Cash Out`);
+              await clickCashOut();
             }
             currentPoll.isActive = false;
           }

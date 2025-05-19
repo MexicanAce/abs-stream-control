@@ -53,6 +53,14 @@ STREAM_WALLET_ADDRESS=your_wallet_address_here
 STREAMER_ADDRESS=your_streamer_address_here
 ```
 
+## How to grab `STREAM_USER_TOKEN`?
+
+1. Log into the Abstract Portal (portal.abs.xyz)
+2. Open the network tab in your browser's Dev Tools
+3. Open up your stream
+4. Filter the network tab for a POST request to `/api/streamer/chat/auth`
+5. The response will contain a `token`, that is your `STREAM_USER_TOKEN`
+
 ## Usage
 
 1. Access the admin interface at `http://localhost:3000/admin`
